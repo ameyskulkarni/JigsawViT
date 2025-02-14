@@ -15,6 +15,13 @@ from munch import Munch
 class JigsawVisionTransformer(VisionTransformer):
     def __init__(self, mask_ratio, use_jigsaw, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        print("Positional arguments (*args):")
+        for i, arg in enumerate(args):
+            print(f"  args[{i}]: {arg}")
+
+        print("\nKeyword arguments (**kwargs):")
+        for key, value in kwargs.items():
+            print(f"  {key}: {value}")
         self.mask_ratio = mask_ratio
         self.use_jigsaw = use_jigsaw
 
@@ -34,11 +41,11 @@ class JigsawVisionTransformer(VisionTransformer):
         Per-sample shuffling is done by argsort random noise.
         x: [N, L, D], sequence
         """
-        N, L, D = x.shape  # batch, length, dim
+        N, L, D = x.shape  # batch, length, dim [128, 196, 384]
         len_keep = int(L * (1 - mask_ratio))
         
         noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
-        
+
         # sort noise for each sample
         ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
         # target = einops.repeat(self.target, 'L -> N L', N=N) 
@@ -48,7 +55,7 @@ class JigsawVisionTransformer(VisionTransformer):
         ids_keep = ids_shuffle[:, :len_keep] # N, len_keep
         x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
         target_masked = ids_keep
-        
+
         return x_masked, target_masked
 
     def forward_jigsaw(self, x):
@@ -80,11 +87,12 @@ class JigsawVisionTransformer(VisionTransformer):
         return x
 
     def forward(self, x):
-        x = self.patch_embed(x)
-        pred_cls = self.forward_cls(x)
+        # Batch size is 96
+        x = self.patch_embed(x) # [128, 3, 224, 224] -> [128, 196, 384] Just for explanation, batch size is 96
+        pred_cls = self.forward_cls(x) # [128, 1000]. These are logits, not probabilities.
         outs = Munch(sup=pred_cls)
         if self.use_jigsaw:
-            pred_jigsaw, targets_jigsaw = self.forward_jigsaw(x)
+            pred_jigsaw, targets_jigsaw = self.forward_jigsaw(x) # pred_jigsaw is resized from [128, 98, 196] and targets_jigsaw is resized from [128, 98]. The pred values are still logits.
             outs.pred_jigsaw = pred_jigsaw
             outs.gt_jigsaw = targets_jigsaw
         return outs

@@ -422,6 +422,7 @@ def main(args):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.resume, map_location='cpu', check_hash=True)
         else:
+            print(f"Loading checkpoint from {args.resume}")
             checkpoint = torch.load(args.resume, map_location='cpu')
         model_without_ddp.load_state_dict(checkpoint['model'])
         if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
@@ -434,6 +435,7 @@ def main(args):
                 loss_scaler.load_state_dict(checkpoint['scaler'])
         lr_scheduler.step(args.start_epoch)
     if args.eval:
+        print(f"mask_ratio {args.mask_ratio}, use_jigsaw {args.use_jigsaw}, nb_classes {args.nb_classes}, drop {args.drop}, drop_path {args.drop_path}, input_size {args.input_size}, use_jigsaw {args.use_jigsaw}")
         test_stats = evaluate(data_loader_val, model, device)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         return
