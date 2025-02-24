@@ -11,6 +11,13 @@ from timm.models.layers import trunc_normal_
 import einops
 from munch import Munch
 
+import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
+import numpy as np
+from torchvision.utils import make_grid
+from PIL import Image
+import torch.nn.functional as F
+
 
 class JigsawVisionTransformer(VisionTransformer):
     def __init__(self, mask_ratio, use_jigsaw, *args, **kwargs):
@@ -72,7 +79,7 @@ class JigsawVisionTransformer(VisionTransformer):
         x = self.jigsaw(x[:, 1:])
         return x.reshape(-1, self.num_patches), target.reshape(-1)
 
-    def forward_cls(self, x): 
+    def forward_cls(self, x):
         # add pos embed w/o cls token
         x = x + self.pos_embed[:, 1:, :]
 
@@ -87,15 +94,63 @@ class JigsawVisionTransformer(VisionTransformer):
         return x
 
     def forward(self, x):
+        # Shuffling patches for inference for classification head alone.
+        x_shuffled = self.shuffle_patches(x, 16)
         # Batch size is 96
         x = self.patch_embed(x) # [128, 3, 224, 224] -> [128, 196, 384] Just for explanation, batch size is 96
-        pred_cls = self.forward_cls(x) # [128, 1000]. These are logits, not probabilities.
+        x_shuffled = self.patch_embed(x_shuffled)
+        pred_cls = self.forward_cls(x_shuffled) # [128, 1000]. These are logits, not probabilities.
         outs = Munch(sup=pred_cls)
         if self.use_jigsaw:
             pred_jigsaw, targets_jigsaw = self.forward_jigsaw(x) # pred_jigsaw is resized from [128, 98, 196] and targets_jigsaw is resized from [128, 98]. The pred values are still logits.
             outs.pred_jigsaw = pred_jigsaw
             outs.gt_jigsaw = targets_jigsaw
         return outs
+
+    # Function to display original and shuffled images
+    def visualize_patch_shuffle(self, img, shuffled_img):
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+
+        axes[0].imshow(img.permute(1, 2, 0))  # Convert to (H, W, C)
+        axes[0].set_title("Original Image")
+        axes[0].axis("off")
+
+        axes[1].imshow(shuffled_img.permute(1, 2, 0))  # Convert to (H, W, C)
+        axes[1].set_title("Shuffled Patches")
+        axes[1].axis("off")
+
+        plt.show()
+
+    def shuffle_patches(self, images, patch_size=16):
+        """
+        Extracts 16x16 patches from each image, shuffles them, and reconstructs the image.
+
+        Args:
+            images (torch.Tensor): Input batch of images of shape (B, C, H, W).
+            patch_size (int): Size of each patch (default is 16x16).
+
+        Returns:
+            torch.Tensor: Batch of images with shuffled patches, same shape as input.
+        """
+        B, C, H, W = images.shape
+        num_patches = (H // patch_size) * (W // patch_size)  # Total number of patches per image
+        grid_size = H // patch_size  # Number of patches per row/column
+
+        # Step 1: Reshape images into patches (B, num_patches, C, patch_size, patch_size)
+        patches = images.unfold(2, patch_size, patch_size).unfold(3, patch_size, patch_size)
+        patches = patches.permute(0, 2, 3, 1, 4, 5).reshape(B, num_patches, C, patch_size, patch_size)
+
+        # Step 2: Shuffle patches randomly for each image in the batch
+        shuffled_patches = patches.clone()
+        for i in range(B):
+            perm = torch.randperm(num_patches)  # Generate random permutation
+            shuffled_patches[i] = patches[i][perm]  # Shuffle patches
+
+        # Step 3: Reshape back to image format
+        shuffled_patches = shuffled_patches.reshape(B, grid_size, grid_size, C, patch_size, patch_size)
+        shuffled_patches = shuffled_patches.permute(0, 3, 1, 4, 2, 5).reshape(B, C, H, W)
+
+        return shuffled_patches
 
 
 @register_model
