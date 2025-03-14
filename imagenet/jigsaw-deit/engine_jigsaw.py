@@ -114,7 +114,6 @@ def evaluate(data_loader, model, device):
         # Jigsaw Accuracy Calculation
         if hasattr(output, "pred_jigsaw") and hasattr(output, "gt_jigsaw"):
             jigsaw_acc = compute_jigsaw_accuracy(output.pred_jigsaw, output.gt_jigsaw)
-            print("JIGSAW ACC:", jigsaw_acc)
             metric_logger.meters['jigsaw_acc'].update(jigsaw_acc, n=batch_size)
 
     # gather the stats from all processes
