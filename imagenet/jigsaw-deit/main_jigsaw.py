@@ -241,6 +241,7 @@ def main(args):
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
+        multiprocessing_context='spawn',
         drop_last=True,
     )
     if args.ThreeAugment:
