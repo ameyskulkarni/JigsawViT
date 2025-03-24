@@ -13,6 +13,9 @@ from munch import Munch
 import random
 import torch.nn.functional as F
 
+# It is to be noted that this is a separate patch embedding layer than the one used for the classification branch.
+# The weights of this layer will be updated independently and the weights of the patch embedding used for the jigsaw branch
+# will be updated separately.
 
 class JigsawVisionTransformer(VisionTransformer):
     def __init__(self, mask_ratio, use_jigsaw, jigsaw_patch_sizes=None, *args, **kwargs):
@@ -25,13 +28,14 @@ class JigsawVisionTransformer(VisionTransformer):
         self.default_patch_size = self.patch_embed.patch_size
 
         # List of different patch sizes for jigsaw task
-        self.jigsaw_patch_sizes = jigsaw_patch_sizes if jigsaw_patch_sizes else [(32, 32)]
+        self.jigsaw_patch_sizes = [(32, 32)]
+        self.jigsaw_num_patches = 49
 
         if self.use_jigsaw:
             # Create flexible patch embedding for jigsaw task
             self.flexi_patch_embed = FlexiPatchEmbed(
                 img_size=self.patch_embed.img_size,
-                patch_size=self.default_patch_size,
+                patch_size=self.jigsaw_patch_sizes[0][0],
                 in_chans=3,
                 embed_dim=self.embed_dim
             )
@@ -42,7 +46,7 @@ class JigsawVisionTransformer(VisionTransformer):
                 torch.nn.ReLU(),
                 torch.nn.Linear(self.embed_dim, self.embed_dim),
                 torch.nn.ReLU(),
-                torch.nn.Linear(self.embed_dim, self.num_patches)
+                torch.nn.Linear(self.embed_dim, self.jigsaw_num_patches)
             ])
 
             # Create shared position embeddings that can be resized later
@@ -75,34 +79,34 @@ class JigsawVisionTransformer(VisionTransformer):
 
         return x_masked, target_masked
 
-    def resize_pos_embed(self, pos_embed, num_patches):
-        """
-        Resize position embeddings to match the number of patches
-        """
-        pos_embed_cls, pos_embed_patch = pos_embed[:, :1], pos_embed[:, 1:]
-        batch_size, seq_len, dim = pos_embed_patch.shape
-        h = w = int(math.sqrt(seq_len))
-
-        # Reshape to get 2D positional embedding
-        pos_embed_patch = pos_embed_patch.reshape(batch_size, h, w, dim)
-
-        # Compute new h, w for target number of patches
-        new_h = new_w = int(math.sqrt(num_patches))
-
-        # Resize position embeddings
-        pos_embed_patch = F.interpolate(
-            pos_embed_patch.permute(0, 3, 1, 2),  # [B, D, H, W]
-            size=(new_h, new_w),
-            mode='bilinear',
-            align_corners=False
-        ).permute(0, 2, 3, 1)  # [B, H', W', D]
-
-        pos_embed_patch = pos_embed_patch.flatten(1, 2)  # [B, H'*W', D]
-
-        # Concatenate with class token position embedding
-        new_pos_embed = torch.cat((pos_embed_cls, pos_embed_patch), dim=1)
-
-        return new_pos_embed
+    # def resize_pos_embed(self, pos_embed, num_patches):
+    #     """
+    #     Resize position embeddings to match the number of patches
+    #     """
+    #     pos_embed_cls, pos_embed_patch = pos_embed[:, :1], pos_embed[:, 1:]
+    #     batch_size, seq_len, dim = pos_embed_patch.shape
+    #     h = w = int(math.sqrt(seq_len))
+    #
+    #     # Reshape to get 2D positional embedding
+    #     pos_embed_patch = pos_embed_patch.reshape(batch_size, h, w, dim)
+    #
+    #     # Compute new h, w for target number of patches
+    #     new_h = new_w = int(math.sqrt(num_patches))
+    #
+    #     # Resize position embeddings
+    #     pos_embed_patch = F.interpolate(
+    #         pos_embed_patch.permute(0, 3, 1, 2),  # [B, D, H, W]
+    #         size=(new_h, new_w),
+    #         mode='bilinear',
+    #         align_corners=False
+    #     ).permute(0, 2, 3, 1)  # [B, H', W', D]
+    #
+    #     pos_embed_patch = pos_embed_patch.flatten(1, 2)  # [B, H'*W', D]
+    #
+    #     # Concatenate with class token position embedding
+    #     new_pos_embed = torch.cat((pos_embed_cls, pos_embed_patch), dim=1)
+    #
+    #     return new_pos_embed
 
     def forward_jigsaw(self, x, patch_size=None):
         """
@@ -114,7 +118,7 @@ class JigsawVisionTransformer(VisionTransformer):
         if patch_size is not None and patch_size != self.default_patch_size:
             # Get embeddings with flexible patch size
             x = self.flexi_patch_embed(x, patch_size=patch_size)
-            print(f"Patch sizes shape after flexible patch size: {x.shape}/{patch_size}")
+            # print(f"Patch sizes shape after flexible patch size: {x.shape}/{patch_size}")
 
             # Calculate new number of patches based on the patch size
             H, W = self.patch_embed.img_size
@@ -131,6 +135,7 @@ class JigsawVisionTransformer(VisionTransformer):
 
         # Masking: length -> length * mask_ratio
         x, target = self.random_masking(x, self.mask_ratio)
+        # print(f"Shape of x and target random masking shape: {x.shape}/ {target.shape}")
 
         # Add position embeddings (excluding cls token position)
         # x = x + pos_embed[:, 1:, :][:, :x.size(1), :]
@@ -146,6 +151,7 @@ class JigsawVisionTransformer(VisionTransformer):
 
         # Predict patch positions
         x = self.jigsaw(x[:, 1:])
+        # print(f"Shape of x direct: {x.shape}")
 
         return x.reshape(-1, num_patches), target.reshape(-1)
 
@@ -176,9 +182,11 @@ class JigsawVisionTransformer(VisionTransformer):
         """
         # Standard patch embeddings for classification
         patch_embeds = self.patch_embed(x)
+        # print(f"Shape of patch embeds for classifier branch: {patch_embeds.shape}")
 
         # Classification branch (fixed patch size)
         pred_cls = self.forward_cls(patch_embeds)
+        # print(f"Shape of pred_cls for classifier branch: {pred_cls.shape}")
         outs = Munch(sup=pred_cls)
 
         # Jigsaw branch (flexible patch size)
@@ -190,6 +198,7 @@ class JigsawVisionTransformer(VisionTransformer):
                 jigsaw_patch_size = self.default_patch_size
 
             pred_jigsaw, targets_jigsaw = self.forward_jigsaw(x, patch_size=jigsaw_patch_size)
+            # print(f"pred_jigsaw and targets_jigsaw shape after forward pass : {pred_jigsaw.shape}, {targets_jigsaw.shape}")
             outs.pred_jigsaw = pred_jigsaw
             outs.gt_jigsaw = targets_jigsaw
             outs.jigsaw_patch_size = jigsaw_patch_size
@@ -210,6 +219,9 @@ class FlexiPatchEmbed(nn.Module):
         self.embed_dim = embed_dim
 
         # Create the default patch embedding kernel
+        # It is to be noted that this is a separate patch embedding layer than the one used for the classification branch.
+        # The weights of this layer will be updated independently and the weights of the patch embedding used for the jigsaw branch
+        # will be updated separately.
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=self.patch_size, stride=self.patch_size)
 
         # Calculate number of patches for default patch size
@@ -276,7 +288,6 @@ class FlexiPatchEmbed(nn.Module):
 
             # Apply the convolution
             x = temp_conv(x).flatten(2).transpose(1, 2)
-
         return x
 
 
