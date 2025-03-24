@@ -25,7 +25,7 @@ class JigsawVisionTransformer(VisionTransformer):
         self.default_patch_size = self.patch_embed.patch_size
 
         # List of different patch sizes for jigsaw task
-        self.jigsaw_patch_sizes = jigsaw_patch_sizes if jigsaw_patch_sizes else [(8, 8), (16, 16), (32, 32)]
+        self.jigsaw_patch_sizes = jigsaw_patch_sizes if jigsaw_patch_sizes else [(32, 32)]
 
         if self.use_jigsaw:
             # Create flexible patch embedding for jigsaw task
@@ -63,11 +63,13 @@ class JigsawVisionTransformer(VisionTransformer):
 
         noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
 
-        # Sort noise for each sample
+        # sort noise for each sample
         ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
+        # target = einops.repeat(self.target, 'L -> N L', N=N)
+        # target = target.to(x.device)
 
-        # Keep the first subset
-        ids_keep = ids_shuffle[:, :len_keep]  # N, len_keep
+        # keep the first subset
+        ids_keep = ids_shuffle[:, :len_keep] # N, len_keep
         x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
         target_masked = ids_keep
 
@@ -112,6 +114,7 @@ class JigsawVisionTransformer(VisionTransformer):
         if patch_size is not None and patch_size != self.default_patch_size:
             # Get embeddings with flexible patch size
             x = self.flexi_patch_embed(x, patch_size=patch_size)
+            print(f"Patch sizes shape after flexible patch size: {x.shape}/{patch_size}")
 
             # Calculate new number of patches based on the patch size
             H, W = self.patch_embed.img_size
