@@ -41,6 +41,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
             outputs = model(samples)
             loss = criterion(samples, outputs.sup, targets)
             if args.use_jigsaw:
+                print(f"shape of jigsaw outputs: {outputs.pred_jigsaw.shape}/{outputs.gt_jigsaw.shape}")
                 loss_jigsaw = F.cross_entropy(outputs.pred_jigsaw, outputs.gt_jigsaw) * args.lambda_jigsaw
                 loss += loss_jigsaw
 
